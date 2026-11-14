@@ -5,3 +5,4 @@ dist-ssr
 .DS_Store
 .web_builder
 *.log
+*.tsbuildinfo

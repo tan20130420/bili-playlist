@@ -1,1 +1,0 @@
-{"root":["./src/App.tsx","./src/main.tsx","./src/components/PlayerBar.tsx","./src/components/Sidebar.tsx","./src/components/SongList.tsx","./src/components/SyncPanel.tsx","./src/services/gist.ts","./src/stores/library.ts","./src/types/index.ts","./src/utils/bili.ts"],"version":"5.9.3"}
