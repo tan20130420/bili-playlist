@@ -100,6 +100,20 @@ export async function pushGist(
   return updated.id
 }
 
+/**
+ * 在账号下查找已有的歌单 Gist（新设备只有 Token 时用于自动发现）
+ * 优先匹配包含 bili-playlist.json 的文件，其次匹配描述
+ */
+export async function findGist(token: string): Promise<string | null> {
+  const list = await request<Array<GistResponse>>(`${API}/gists?per_page=100`, {
+    method: 'GET',
+    headers: headers(token),
+  })
+  const byFile = list.find((g) => Boolean(g.files?.[GIST_FILE]))
+  if (byFile) return byFile.id
+  return null
+}
+
 /** 校验 token 对应的账号 */
 export async function verifyToken(token: string): Promise<string> {
   const user = await request<{ login: string }>(`${API}/user`, {

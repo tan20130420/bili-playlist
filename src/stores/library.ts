@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Playlist, Song } from '../types'
 import { uid } from '../utils/bili'
-import { pullGist, pushGist, verifyToken } from '../services/gist'
+import { findGist, pullGist, pushGist, verifyToken } from '../services/gist'
 
 export type SyncStatus = 'idle' | 'syncing' | 'ok' | 'error'
 
@@ -179,11 +179,23 @@ export const useLibrary = create<LibraryState>()(
         set({ syncStatus: 'syncing', syncMessage: '正在验证 Token…' })
         try {
           const login = await verifyToken(token)
+          // 新设备没有 Gist ID 时，自动在账号下找到已有歌单文件
+          let gistId = get().gistId
+          if (!gistId) {
+            try {
+              gistId = (await findGist(token)) ?? ''
+            } catch {
+              gistId = ''
+            }
+          }
           set({
             githubToken: token,
             githubUser: login,
+            gistId,
             syncStatus: 'ok',
-            syncMessage: `已连接 @${login}`,
+            syncMessage: gistId
+              ? `已连接 @${login}，找到云端歌单，可点「从云端恢复」`
+              : `已连接 @${login}`,
             lastSyncAt: Date.now(),
           })
         } catch (e) {
@@ -232,15 +244,29 @@ export const useLibrary = create<LibraryState>()(
       },
 
       pullFromCloud: async (opts) => {
-        const { githubToken, gistId } = get()
-        if (!githubToken || !gistId) {
+        const { githubToken } = get()
+        let { gistId } = get()
+        if (!githubToken) {
           if (!opts?.silent) {
-            set({ syncStatus: 'error', syncMessage: '请先连接 GitHub 并完成一次上传' })
+            set({ syncStatus: 'error', syncMessage: '请先连接 GitHub' })
           }
           return
         }
         set({ syncStatus: 'syncing', syncMessage: '正在下载…' })
         try {
+          // 新设备未记录 Gist ID 时，先自动发现
+          if (!gistId) {
+            const found = await findGist(githubToken)
+            if (!found) {
+              set({
+                syncStatus: 'error',
+                syncMessage: '账号下没有找到歌单备份，请先在一台设备上「上传到云端」',
+              })
+              return
+            }
+            gistId = found
+            set({ gistId })
+          }
           const data = await pullGist(githubToken, gistId)
           if (!data) {
             set({ syncStatus: 'ok', syncMessage: '云端还没有歌单数据', lastSyncAt: Date.now() })
@@ -272,9 +298,16 @@ export const useLibrary = create<LibraryState>()(
 
       /** 启动时静默同步：本地为空则拉取云端，否则比较时间戳，云端更新则覆盖 */
       autoPull: async () => {
-        const { githubToken, gistId, autoSync, playlists } = get()
-        if (!autoSync || !githubToken || !gistId) return
+        const { githubToken, autoSync, playlists } = get()
+        if (!autoSync || !githubToken) return
+        let { gistId } = get()
         try {
+          if (!gistId) {
+            const found = await findGist(githubToken)
+            if (!found) return
+            gistId = found
+            set({ gistId })
+          }
           const data = await pullGist(githubToken, gistId)
           if (!data) {
             if (playlists.length > 0) await get().pushToCloud()

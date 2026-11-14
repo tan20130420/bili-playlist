@@ -135,7 +135,7 @@ export default function SyncPanel({ onClose }: { onClose: () => void }) {
               <span className="text-muted">账号</span>
               <span className="font-medium">@{githubUser || '已连接'}</span>
               <span className="ml-auto text-xs text-muted">
-                {gistId ? `Gist ${gistId.slice(0, 8)}…` : '尚未创建云端文件'}
+                {gistId ? `Gist ${gistId.slice(0, 8)}…` : '未找到云端文件'}
               </span>
             </div>
 
@@ -155,7 +155,7 @@ export default function SyncPanel({ onClose }: { onClose: () => void }) {
               </button>
               <button
                 className="btn"
-                disabled={syncStatus === 'syncing' || !gistId}
+                disabled={syncStatus === 'syncing' || !githubToken}
                 onClick={() => void pullFromCloud()}
               >
                 从云端恢复
