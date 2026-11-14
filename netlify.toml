@@ -1,3 +1,10 @@
+# 这个配置让同一个 Netlify 站点同时提供：
+#   1) 前端页面      -> publish 目录 dist
+#   2) 音频代理接口  -> netlify/edge-functions/bili-audio.js（路由 /audio、/health）
+#
+# 国内网络访问 *.netlify.app 通常正常，而 *.workers.dev 可能被阻断，
+# 因此推荐用 Netlify 作为音频代理（手机无需开代理即可播放）。
+
 [build]
   command = "npm run build"
   publish = "dist"
@@ -5,8 +12,9 @@
 [build.environment]
   NODE_VERSION = "20"
 
-# 静态资源缓存
 [[headers]]
   for = "/assets/*"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"
+
+# Edge Function 的路由在函数文件内用 export const config 声明，这里无需重复配置

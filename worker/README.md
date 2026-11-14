@@ -1,75 +1,116 @@
-# 音频代理 Worker（可选部署）
+# 音频代理部署指南（纯音频 + 锁屏播放）
 
-部署后可以：
-- **只播放音频**（不看视频画面）
-- **手机息屏/切后台继续播放**，锁屏界面有播放控制
-- 拖动进度条、自动连播下一首
+部署后可以：**只播放音频**、**手机锁屏/切后台继续播放**、锁屏界面切歌、拖动进度、自动连播。
 
-不部署也能正常用，只是播放时仍然是B站 iframe（有画面，但锁屏会停）。
+## 为什么需要代理
 
----
+实测结论（2026-11）：
 
-## 部署（Cloudflare Workers，免费，约 2 分钟）
+| 检查项 | 结果 |
+|---|---|
+| B站音频 CDN 无 Referer 请求 | **403 拒绝** |
+| B站音频 CDN 带 `Referer: bilibili.com` | 206 正常 |
+| B站 playurl 接口无 buvid cookie | 403 风控页 |
+| iframe 播放器锁屏后 | 暂停（浏览器策略，无法绕过） |
 
-### 方式一：网页控制台（最简单，不用装任何东西）
+浏览器里的 `<audio>` 既无法伪造 Referer，也无法设置 Cookie 头，所以必须有一个服务端代理带着正确的请求头去取流。
 
-1. 注册/登录 https://dash.cloudflare.com （免费，不用绑卡）
-2. 左侧菜单 **Workers & Pages** → **Create** → **Start with Hello World!**
-3. 名称随便填，例如 `bili-audio` → **Deploy**
-4. 点 **Edit code**，把本目录 `bili-audio-worker.js` 的**全部内容**粘贴进去，覆盖原内容
-5. 右上角 **Deploy**，等待生效
-6. 复制你的 Worker 地址，形如
-   `https://bili-audio.你的子域.workers.dev`
-7. 打开 B歌单 → 右上角「云同步」旁的设置（或播放器里的「音频设置」）→ 填入这个地址 → 保存
+## 选哪个平台
 
-### 方式二：命令行
+| 平台 | 国内可直连 | 说明 |
+|---|---|---|
+| **Netlify**（推荐） | 是 | 自有 CDN，实测 `*.netlify.app` 可访问 |
+| Cloudflare Workers | 部分网络不行 | `*.workers.dev` TLS 握手在部分网络被重置 |
 
-```bash
-npm i -g wrangler
-wrangler login
-wrangler deploy bili-audio-worker.js --name bili-audio
-```
+> 实测：同一 Cloudflare IP，SNI 为 `www.cloudflare.com` 正常 200，SNI 为 `*.workers.dev` 直接被 RST 重置。
 
 ---
 
-## 验证部署是否成功
+## 方案一：Netlify（推荐，手机无需开代理）
 
-浏览器直接访问：
+代码位置：`netlify/edge-functions/bili-audio.js`（已在仓库里，无需改动）。
+
+### 步骤
+
+1. 打开 https://app.netlify.com ，**用 GitHub 账号登录**（不用注册新账号）
+2. 点 **Add new site** → **Import an existing project**
+3. 选 **GitHub** → 授权 → 选择 `bili-playlist` 仓库
+4. 构建设置保持默认（`netlify.toml` 已写好：命令 `npm run build`、目录 `dist`）
+5. 点 **Deploy site**，等 1-2 分钟
+6. 拿到地址，形如 `https://calm-tiger-1234.netlify.app`
+7. 在 B歌单 → 设置 → 音频 → 填入这个地址 → **测试连接** → 选**纯音频**
+
+### 验证
+
+浏览器打开：
 
 ```
-https://你的Worker地址/health
+https://你的站点.netlify.app/health
 ```
 
-返回 `{"ok":true}` 即成功。再试：
+返回 `{"ok":true}` 即成功。
 
 ```
-https://你的Worker地址/audio?bvid=BV1GJ411x7h7&p=1
+https://你的站点.netlify.app/audio?bvid=BV1GJ411x7h7&p=1
 ```
 
-能开始下载音频、或用播放器打开能出声，就是正常。
+能播放/下载音频即完全打通。
+
+### 说明
+- 同一个 Netlify 站点**同时托管前端页面和音频代理**：`/` 是应用，`/audio` 是代理
+- 以后 `git push` 到 main，Netlify 会自动重新部署
+- 免费额度：每月 100GB 带宽 + 300 构建分钟，个人听歌绰绰有余
+- 如果不想连 GitHub，也可把整个项目文件夹（含 `netlify/` 和 `netlify.toml`）拖到 https://app.netlify.com/drop
 
 ---
 
-## 接口说明
+## 方案二：Cloudflare Workers（备选，需要能访问 workers.dev）
 
-| 路由 | 参数 | 说明 |
-|------|------|------|
-| `/health` | - | 健康检查，返回 `{"ok":true}` |
-| `/audio` | `bvid` 或 `aid`、`p`（分P，默认1） | 返回音频流，支持 Range 拖动 |
+代码位置：`worker/bili-audio-worker.js`。
 
-返回的音频是 B站 DASH 音频流（m4a），已选最高码率。
+1. 登录 https://dash.cloudflare.com → **Workers & Pages** → **Create** → **Hello World**
+2. 名称随意，例如 `bili-audio` → **Deploy**
+3. 点 **Edit code**，把 `worker/bili-audio-worker.js` 全文粘进去覆盖 → **Deploy**
+4. 复制 `https://xxx.你的子域.workers.dev`，填到应用里
+
+> 注意：`*.workers.dev` 在部分国内网络（尤其是手机流量）会被阻断。
+> 如果你电脑开了 VPN 能访问、手机不能，说明属于这种情况，请改用 Netlify 方案。
 
 ---
 
-## 免费额度与限制
+## 接口说明（两个平台一致）
 
-- 免费版每天 **10 万次请求**，个人听歌完全够用
-- 每次播放按 Range 分段请求，一首歌通常几十次请求
-- 不支持登录才能看的高清音频（未登录最高 132kbps 左右，够听）
-- 若B站改接口导致失效，只需更新 Worker 代码里的接口路径即可
+| 路由 | 参数 | 返回 |
+|---|---|---|
+| `GET /health` | - | `{"ok":true}` |
+| `GET /audio` | `bvid` 或 `aid`、`p`（分P，默认1） | B站 DASH 音频流（m4a），支持 Range 拖动 |
 
-## 注意事项
+自动选择最高码率音频流；主域名失败时自动切换 B站给的备用 CDN 域名。
 
-- 该 Worker 只代理你自己的播放请求，不存储任何音频内容
-- 公开部署意味着别人知道地址也能用，如担心可只自己用、不分享地址
-- 版权归B站与原作者所有，仅供个人收听
+---
+
+## 常见问题
+
+**`测试连接` 报无法连接**
+- 用 workers.dev 地址：该域名在你的网络被限制，换 Netlify
+- 用 netlify.app：站点是否部署成功？打开根路径看是不是你的 B歌单页面
+
+**`/audio` 返回 `获取视频信息失败`**
+B站接口临时风控，等几分钟再试；或换一个视频测试。
+
+**`/audio` 返回 `音频源不可用（403）`**
+B站调整了 CDN 校验策略，需要更新代理代码（`bili-audio-worker.js` 和 `netlify/edge-functions/bili-audio.js` 两份都要改）。
+
+**手机锁屏后还是停**
+- iOS Safari：首次需手动点一次播放，之后锁屏可继续
+- 部分安卓浏览器需要在系统设置里允许该浏览器的通知/媒体权限
+
+**音质一般**
+未登录 B站时音频最高约 132kbps。要更高音质需在代理里带账号 cookie（有封号风险，不建议）。
+
+---
+
+## 隐私与合规
+
+- 代理只转发你自己的播放请求，不落地存储任何音频
+- 音频版权归 B站与原作者，仅供个人收听

@@ -80,7 +80,7 @@ export default function AudioPlayer() {
           className="h-9 w-full"
           onEnded={() => playNext(1)}
           onError={() =>
-            setErr('音频加载失败，请检查 Worker 地址是否正确、是否已部署')
+            setErr('音频加载失败：请检查代理地址是否正确、是否可访问（workers.dev 可能被网络限制，建议用 netlify.app）')
           }
         />
         {err && <p className="text-[11px] text-red-400">{err}</p>}
