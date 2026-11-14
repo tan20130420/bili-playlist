@@ -19,7 +19,6 @@ export default function App() {
   const {
     playlists,
     activePlaylistId,
-    setActive,
     createPlaylist,
     playerVisible,
     currentSongId,
@@ -29,15 +28,23 @@ export default function App() {
   } = useLibrary()
   const [syncOpen, setSyncOpen] = useState(false)
 
-  // 首次使用：无歌单时建一个；随后尝试从云端拉取
+  // 启动：先从云端拉取，云端也没数据时才建默认歌单
+  // （顺序很关键：先建空歌单会让本地时间戳变新，导致云端数据拉不下来）
   useEffect(() => {
-    const state = useLibrary.getState()
-    if (state.playlists.length === 0) {
-      createPlaylist('我的歌单')
-    } else if (!state.activePlaylistId) {
-      setActive(state.playlists[0].id)
+    let cancelled = false
+    void (async () => {
+      await useLibrary.getState().autoPull()
+      if (cancelled) return
+      const state = useLibrary.getState()
+      if (state.playlists.length === 0) {
+        state.createPlaylist('我的歌单', { silent: true })
+      } else if (!state.activePlaylistId) {
+        state.setActive(state.playlists[0].id)
+      }
+    })()
+    return () => {
+      cancelled = true
     }
-    void state.autoPull()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

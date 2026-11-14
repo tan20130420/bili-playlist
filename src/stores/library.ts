@@ -24,7 +24,7 @@ interface LibraryState {
   syncMessage: string
   lastSyncAt: number | null
 
-  createPlaylist: (name: string) => string
+  createPlaylist: (name: string, opts?: { silent?: boolean }) => string
   deletePlaylist: (id: string) => void
   renamePlaylist: (id: string, name: string) => void
   setActive: (id: string) => void
@@ -66,7 +66,7 @@ export const useLibrary = create<LibraryState>()(
       syncMessage: '',
       lastSyncAt: null,
 
-      createPlaylist: (name) => {
+      createPlaylist: (name, opts) => {
         const id = uid()
         set((s) => ({
           playlists: [
@@ -74,6 +74,7 @@ export const useLibrary = create<LibraryState>()(
             { id, name: name.trim() || '未命名歌单', songs: [], createdAt: Date.now() },
           ],
           activePlaylistId: s.activePlaylistId ?? id,
+          ...(opts?.silent ? {} : { localUpdatedAt: Date.now() }),
         }))
         return id
       },
@@ -81,7 +82,7 @@ export const useLibrary = create<LibraryState>()(
       deletePlaylist: (id) =>
         set((s) => {
           const playlists = s.playlists.filter((p) => p.id !== id)
-          const next: Partial<LibraryState> = { playlists }
+          const next: Partial<LibraryState> = { playlists, localUpdatedAt: Date.now() }
           if (s.activePlaylistId === id) next.activePlaylistId = playlists[0]?.id ?? null
           if (s.currentPlaylistId === id) {
             next.currentPlaylistId = null
@@ -95,6 +96,7 @@ export const useLibrary = create<LibraryState>()(
           playlists: s.playlists.map((p) =>
             p.id === id ? { ...p, name: name.trim() || p.name } : p,
           ),
+          localUpdatedAt: Date.now(),
         })),
 
       setActive: (id) => set({ activePlaylistId: id }),
@@ -110,6 +112,7 @@ export const useLibrary = create<LibraryState>()(
               ? { ...p, songs: [...p.songs, { ...song, id: uid(), addedAt: Date.now() }] }
               : p,
           ),
+          localUpdatedAt: Date.now(),
         }))
         return true
       },
@@ -126,6 +129,7 @@ export const useLibrary = create<LibraryState>()(
                 }
               : p,
           ),
+          localUpdatedAt: Date.now(),
         })),
 
       removeSong: (playlistId, songId) =>
@@ -136,6 +140,7 @@ export const useLibrary = create<LibraryState>()(
               : p,
           ),
           currentSongId: s.currentSongId === songId ? null : s.currentSongId,
+          localUpdatedAt: Date.now(),
         })),
 
       moveSong: (playlistId, songId, dir) =>
@@ -150,6 +155,7 @@ export const useLibrary = create<LibraryState>()(
             songs.splice(target, 0, item)
             return { ...p, songs }
           }),
+          localUpdatedAt: Date.now(),
         })),
 
       playSong: (playlistId, songId) =>
@@ -366,7 +372,6 @@ let pushTimer: ReturnType<typeof setTimeout> | undefined
 
 useLibrary.subscribe((state, prev) => {
   if (state.playlists === prev.playlists) return
-  useLibrary.setState({ localUpdatedAt: Date.now() })
   if (suppressPush) return
   const { autoSync, githubToken, gistId } = state
   if (!autoSync || !githubToken || !gistId) return
