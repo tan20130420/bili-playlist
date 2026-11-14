@@ -1,11 +1,22 @@
 import { useState } from 'react'
 import { useLibrary } from '../stores/library'
 
+interface DebugPayload {
+  ok?: boolean
+  cookie?: string
+  view?: { status: number; code?: number; message?: string; title?: string; raw?: string }
+  resolve?: { error?: string; step?: string; detail?: string; bandwidth?: number }
+  error?: string
+}
+
 export default function AudioTab() {
-  const { audioMode, workerUrl, saveAudioConfig } = useLibrary()
+  const { audioMode, workerUrl, saveAudioConfig, playlists, currentSongId, activePlaylistId } =
+    useLibrary()
   const [url, setUrl] = useState(workerUrl)
   const [testState, setTestState] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
   const [msg, setMsg] = useState('')
+  const [diagLines, setDiagLines] = useState<string[]>([])
+  const [diagging, setDiagging] = useState(false)
 
   const save = () => {
     saveAudioConfig({ workerUrl: url })
@@ -13,8 +24,10 @@ export default function AudioTab() {
     setTestState('idle')
   }
 
+  const baseOf = () => url.trim().replace(/\/+$/, '')
+
   const test = async () => {
-    const base = url.trim().replace(/\/+$/, '')
+    const base = baseOf()
     if (!base) {
       setMsg('请先填写代理地址')
       return
@@ -26,14 +39,76 @@ export default function AudioTab() {
       const data = (await res.json()) as { ok?: boolean }
       if (data.ok) {
         setTestState('ok')
-        setMsg('连接成功，可以切换为纯音频模式了')
+        setMsg('地址可访问。再点「诊断音频」确认能否取到B站音频流')
       } else {
         setTestState('fail')
-        setMsg('地址可访问，但返回内容不对，请确认部署的是本项目的代理代码')
+        setMsg('地址可访问，但返回内容不对，请确认粘贴的是本项目的代理代码')
       }
     } catch {
       setTestState('fail')
-      setMsg('无法连接。若用的是 workers.dev 地址，可能是该域名被网络限制，建议改用 Netlify')
+      setMsg('无法连接。若用 workers.dev，该域名可能被网络限制，建议换 Koyeb / Render')
+    }
+  }
+
+  /** 用当前歌单里的一首歌实际走一遍 /debug */
+  const diagnose = async () => {
+    const base = baseOf()
+    if (!base) {
+      setMsg('请先填写代理地址')
+      return
+    }
+    const all = playlists.flatMap((p) => p.songs)
+    const song =
+      all.find((s) => s.id === currentSongId) ??
+      playlists.find((p) => p.id === activePlaylistId)?.songs[0] ??
+      all[0]
+    if (!song) {
+      setMsg('歌单里还没有歌曲，先添加一首再诊断')
+      return
+    }
+    setDiagging(true)
+    setDiagLines([])
+    const idq = song.bvid ? `bvid=${song.bvid}` : `aid=${song.aid ?? ''}`
+    const lines: string[] = [`诊断歌曲：${song.title}（${idq} P${song.page}）`]
+    try {
+      const res = await fetch(`${base}/debug?${idq}&p=${song.page}`, { cache: 'no-store' })
+      const ct = res.headers.get('content-type') || ''
+      if (!ct.includes('json')) {
+        lines.push(`✗ 代理没有 /debug 接口（HTTP ${res.status}）`)
+        lines.push('→ 你的代理可能是旧版代码，请重新粘贴 worker/bili-audio-worker.js 最新全文')
+        setDiagLines(lines)
+        return
+      }
+      const data = (await res.json()) as DebugPayload
+      if (data.error) {
+        lines.push(`✗ ${data.error}`)
+      }
+      if (data.view) {
+        lines.push(
+          data.view.code === 0
+            ? `✓ B站视频信息正常：${data.view.title ?? ''}`
+            : `✗ B站视频信息失败：code=${data.view.code} ${data.view.message ?? ''}（HTTP ${data.view.status}）`,
+        )
+        if (data.view.code !== 0 && data.view.raw) {
+          lines.push(`  原始响应：${data.view.raw.slice(0, 120)}`)
+          lines.push('  → 这是B站风控，通常因 Cloudflare 机房 IP 被拦，可稍后重试或改用 Koyeb/Render')
+        }
+      }
+      if (data.resolve) {
+        if (data.resolve.error) {
+          lines.push(`✗ 取音频流失败（步骤 ${data.resolve.step ?? '?'}）：${data.resolve.error}`)
+          if (data.resolve.detail) lines.push(`  原始响应：${String(data.resolve.detail).slice(0, 120)}`)
+        } else {
+          lines.push(`✓ 已取到音频流，码率约 ${Math.round((data.resolve.bandwidth ?? 0) / 1000)} kbps`)
+          lines.push('→ 代理链路完全正常，回到播放器重试即可')
+        }
+      }
+    } catch {
+      lines.push('✗ 无法连接代理的 /debug 接口')
+      lines.push('→ 确认地址正确、当前网络能访问该域名')
+    } finally {
+      setDiagging(false)
+      setDiagLines(lines)
     }
   }
 
@@ -74,17 +149,20 @@ export default function AudioTab() {
         <input
           id="worker-url"
           className="input font-mono text-xs"
-          placeholder="https://xxx.netlify.app 或 https://xxx.workers.dev"
+          placeholder="https://xxx.koyeb.app 或 https://xxx.workers.dev"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && save()}
         />
-        <div className="flex gap-2">
-          <button className="btn-primary flex-1" onClick={save}>
+        <div className="grid grid-cols-3 gap-2">
+          <button className="btn-primary" onClick={save}>
             保存
           </button>
-          <button className="btn flex-1" onClick={() => void test()} disabled={testState === 'testing'}>
+          <button className="btn" onClick={() => void test()} disabled={testState === 'testing'}>
             {testState === 'testing' ? '测试中…' : '测试连接'}
+          </button>
+          <button className="btn" onClick={() => void diagnose()} disabled={diagging}>
+            {diagging ? '诊断中…' : '诊断音频'}
           </button>
         </div>
         {msg && (
@@ -96,6 +174,24 @@ export default function AudioTab() {
             {msg}
           </p>
         )}
+        {diagLines.length > 0 && (
+          <div className="space-y-1 rounded-lg bg-panel2/70 p-2.5">
+            {diagLines.map((line, i) => (
+              <p
+                key={i}
+                className={`break-all font-mono text-[11px] leading-relaxed ${
+                  line.startsWith('✓')
+                    ? 'text-accent'
+                    : line.startsWith('✗')
+                      ? 'text-red-400'
+                      : 'text-muted'
+                }`}
+              >
+                {line}
+              </p>
+            ))}
+          </div>
+        )}
       </div>
 
       <details className="rounded-lg bg-panel2/60 p-3 text-xs text-muted">
@@ -106,31 +202,29 @@ export default function AudioTab() {
             所以需要一个自己的小代理（免费）。部署时填它的地址即可。
           </p>
           <div className="rounded-md bg-bg/60 p-2">
-            <p className="mb-1 font-bold text-accent">方案一：Koyeb（推荐，手机无需代理）</p>
+            <p className="mb-1 font-bold text-accent">方案一：Koyeb（推荐，国内可直连，不休眠）</p>
             <ol className="list-decimal space-y-0.5 pl-4">
               <li>GitHub 登录 https://app.koyeb.com</li>
               <li>Create Service → GitHub → 选 bili-playlist 仓库</li>
               <li>Builder 选 Dockerfile，目录填 server，端口 8080</li>
-              <li>得到 https://xxx.koyeb.app，填到上面</li>
             </ol>
           </div>
           <div className="rounded-md bg-bg/60 p-2">
-            <p className="mb-1 font-bold text-accent">方案二：Render（可直连，但会休眠）</p>
+            <p className="mb-1 font-bold text-accent">方案二：Render（不用绑卡，会休眠）</p>
             <ol className="list-decimal space-y-0.5 pl-4">
               <li>GitHub 登录 https://render.com → New → Web Service</li>
-              <li>选仓库，Root Directory 填 server，Start Command 填 node index.mjs</li>
-              <li>得到 https://xxx.onrender.com</li>
+              <li>Root Directory 填 server，Start Command 填 node index.mjs</li>
             </ol>
           </div>
           <div className="rounded-md bg-bg/60 p-2">
             <p className="mb-1 font-bold text-accent2">方案三：Cloudflare Worker（需能访问 workers.dev）</p>
             <p>
-              见项目 <code>worker/</code> 目录。workers.dev 在部分国内网络被阻断（TLS 被重置），
-              有代理时可用。
+              见项目 <code>worker/</code>。workers.dev 在部分国内网络被阻断，
+              需要手机能直连或开着代理。
             </p>
           </div>
           <p className="text-[11px]">
-            详细步骤见项目里的 <code>server/README.md</code> 和 <code>worker/README.md</code>。
+            详细步骤见 <code>server/README.md</code> 与 <code>worker/README.md</code>。
           </p>
         </div>
       </details>

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useLibrary } from '../stores/library'
 
 /**
- * 纯音频播放器：通过自建 Worker 代理B站 DASH 音频流，用 <audio> 播放。
+ * 纯音频播放器：通过自建代理获取B站 DASH 音频流，用 <audio> 播放。
  * 相比 iframe：
  *  - 只出声音，省流量
  *  - 手机锁屏 / 切后台可继续播放（配合 MediaSession 显示锁屏控制）
@@ -13,18 +13,21 @@ export default function AudioPlayer() {
     useLibrary()
   const audioRef = useRef<HTMLAudioElement>(null)
   const [err, setErr] = useState('')
+  const [diag, setDiag] = useState('')
+  const [checking, setChecking] = useState(false)
 
   const pl = playlists.find((p) => p.id === currentPlaylistId)
   const song = pl?.songs.find((s) => s.id === currentSongId)
   const enabled = audioMode === 'audio' && Boolean(workerUrl) && Boolean(song)
 
-  const base = workerUrl.replace(/\/+$/, '')
+  const base = workerUrl.trim().replace(/\/+$/, '')
   const idQuery = song ? (song.bvid ? `bvid=${song.bvid}` : `aid=${song.aid ?? ''}`) : ''
   const src = enabled && idQuery ? `${base}/audio?${idQuery}&p=${song?.page ?? 1}` : ''
 
   // 切歌时自动播放
   useEffect(() => {
     setErr('')
+    setDiag('')
     const el = audioRef.current
     if (!enabled || !src || !el) return
     el.load()
@@ -51,6 +54,29 @@ export default function AudioPlayer() {
       /* 部分浏览器不支持，忽略 */
     }
   }, [song, pl?.name, playNext])
+
+  /** <audio> 的 error 事件拿不到响应内容，这里单独请求一次读取真实原因 */
+  const diagnose = async () => {
+    if (!src) return
+    setChecking(true)
+    setDiag('')
+    try {
+      const res = await fetch(src, { headers: { Range: 'bytes=0-1' }, cache: 'no-store' })
+      const type = res.headers.get('content-type') || ''
+      if (type.includes('json')) {
+        const data = (await res.json()) as { error?: string }
+        setDiag(`代理返回：${data.error || JSON.stringify(data)}（HTTP ${res.status}）`)
+      } else if (!res.ok) {
+        setDiag(`代理返回 HTTP ${res.status}，未拿到音频`)
+      } else {
+        setDiag(`代理正常返回 ${type}，问题可能出在音频格式或浏览器解码`)
+      }
+    } catch {
+      setDiag('无法连接代理：请确认该地址在当前网络下可访问')
+    } finally {
+      setChecking(false)
+    }
+  }
 
   if (audioMode !== 'audio') return null
 
@@ -79,11 +105,33 @@ export default function AudioPlayer() {
           preload="auto"
           className="h-9 w-full"
           onEnded={() => playNext(1)}
-          onError={() =>
-            setErr('音频加载失败：请检查代理地址是否正确、是否可访问（workers.dev 可能被网络限制，建议用 netlify.app）')
-          }
+          onError={() => {
+            setErr('音频加载失败')
+            void diagnose()
+          }}
         />
-        {err && <p className="text-[11px] text-red-400">{err}</p>}
+        {err && (
+          <div className="space-y-1">
+            <p className="text-[11px] text-red-400">{err}</p>
+            {checking && <p className="text-[11px] text-muted">正在诊断原因…</p>}
+            {diag && <p className="break-all text-[11px] text-accent2">{diag}</p>}
+            <div className="flex gap-2">
+              <button className="btn-ghost px-2 py-1 text-[11px]" onClick={() => void diagnose()}>
+                重新诊断
+              </button>
+              {src && (
+                <a
+                  className="btn-ghost px-2 py-1 text-[11px]"
+                  href={src}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  直接打开音频地址
+                </a>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
