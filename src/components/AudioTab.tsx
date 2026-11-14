@@ -106,21 +106,32 @@ export default function AudioTab() {
             所以需要一个自己的小代理（免费）。部署时填它的地址即可。
           </p>
           <div className="rounded-md bg-bg/60 p-2">
-            <p className="mb-1 font-bold text-accent">方案一：Netlify（推荐，手机无需开代理）</p>
+            <p className="mb-1 font-bold text-accent">方案一：Koyeb（推荐，手机无需代理）</p>
             <ol className="list-decimal space-y-0.5 pl-4">
-              <li>用 GitHub 账号登录 https://app.netlify.com</li>
-              <li>Add new site → Import an existing project → 选 bili-playlist 仓库</li>
-              <li>直接点 Deploy（配置已写在仓库 netlify.toml 里）</li>
-              <li>得到 https://xxx.netlify.app，填到上面输入框</li>
+              <li>GitHub 登录 https://app.koyeb.com</li>
+              <li>Create Service → GitHub → 选 bili-playlist 仓库</li>
+              <li>Builder 选 Dockerfile，目录填 server，端口 8080</li>
+              <li>得到 https://xxx.koyeb.app，填到上面</li>
             </ol>
           </div>
           <div className="rounded-md bg-bg/60 p-2">
-            <p className="mb-1 font-bold text-accent2">方案二：Cloudflare Worker（需网络能访问 workers.dev）</p>
+            <p className="mb-1 font-bold text-accent">方案二：Render（可直连，但会休眠）</p>
+            <ol className="list-decimal space-y-0.5 pl-4">
+              <li>GitHub 登录 https://render.com → New → Web Service</li>
+              <li>选仓库，Root Directory 填 server，Start Command 填 node index.mjs</li>
+              <li>得到 https://xxx.onrender.com</li>
+            </ol>
+          </div>
+          <div className="rounded-md bg-bg/60 p-2">
+            <p className="mb-1 font-bold text-accent2">方案三：Cloudflare Worker（需能访问 workers.dev）</p>
             <p>
-              见项目 <code>worker/</code> 目录。workers.dev 在部分国内网络被阻断，
-              只有能访问它时才能用；有 VPN 时可用。
+              见项目 <code>worker/</code> 目录。workers.dev 在部分国内网络被阻断（TLS 被重置），
+              有代理时可用。
             </p>
           </div>
+          <p className="text-[11px]">
+            详细步骤见项目里的 <code>server/README.md</code> 和 <code>worker/README.md</code>。
+          </p>
         </div>
       </details>
     </div>

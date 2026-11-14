@@ -68,8 +68,10 @@ async function biliApi(path) {
 }
 
 async function resolveAudio({ bvid, aid, p }) {
-  const idPart = bvid ? `bvid=${encodeURIComponent(bvid)}` : `aid=${encodeURIComponent(aid)}`
-  const view = await biliApi(`/x/web-interface/view?${idPart}`)
+  // view 接口用 aid，playurl 接口必须用 avid
+  const viewId = bvid ? `bvid=${encodeURIComponent(bvid)}` : `aid=${encodeURIComponent(aid)}`
+  const playId = bvid ? `bvid=${encodeURIComponent(bvid)}` : `avid=${encodeURIComponent(aid)}`
+  const view = await biliApi(`/x/web-interface/view?${viewId}`)
   if (!view || view.code !== 0 || !view.data) {
     return { error: view?.message || '获取视频信息失败' }
   }
@@ -82,7 +84,7 @@ async function resolveAudio({ bvid, aid, p }) {
   const cid = target?.cid || view.data.cid
   if (!cid) return { error: '找不到该分P' }
 
-  const play = await biliApi(`/x/player/playurl?${idPart}&cid=${cid}&fnval=16&fnver=0&fourk=1`)
+  const play = await biliApi(`/x/player/playurl?${playId}&cid=${cid}&fnval=16&fnver=0&fourk=1`)
   if (!play || play.code !== 0 || !play.data) {
     return { error: play?.message || '获取播放地址失败' }
   }
