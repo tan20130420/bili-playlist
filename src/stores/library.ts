@@ -15,6 +15,11 @@ interface LibraryState {
   /** 本地最后一次修改时间，用于与云端比较 */
   localUpdatedAt: number
 
+  // 播放设置
+  audioMode: 'iframe' | 'audio'
+  workerUrl: string
+  gistPublic: boolean
+
   // GitHub 同步
   githubToken: string
   gistId: string
@@ -37,12 +42,20 @@ interface LibraryState {
   togglePlayer: () => void
 
   // 同步动作
-  saveGithubConfig: (cfg: { token?: string; gistId?: string; autoSync?: boolean }) => Promise<void>
+  saveGithubConfig: (cfg: {
+    token?: string
+    gistId?: string
+    autoSync?: boolean
+    gistPublic?: boolean
+  }) => Promise<void>
   connectGithub: (token: string) => Promise<void>
   disconnectGithub: () => void
   pushToCloud: () => Promise<void>
   pullFromCloud: (opts?: { silent?: boolean }) => Promise<void>
   autoPull: () => Promise<void>
+  importShared: (name: string, songs: Array<Omit<Song, 'id' | 'addedAt'>>) => string
+  saveAudioConfig: (cfg: { audioMode?: 'iframe' | 'audio'; workerUrl?: string }) => void
+  mergeFromGist: (gistId: string) => Promise<void>
 }
 
 /** 云端拉取时抑制自动推送，避免回环 */
@@ -57,6 +70,9 @@ export const useLibrary = create<LibraryState>()(
       currentSongId: null,
       playerVisible: false,
       localUpdatedAt: 0,
+      audioMode: 'iframe',
+      workerUrl: '',
+      gistPublic: false,
 
       githubToken: '',
       gistId: '',
@@ -173,11 +189,61 @@ export const useLibrary = create<LibraryState>()(
 
       togglePlayer: () => set((s) => ({ playerVisible: !s.playerVisible })),
 
+      saveAudioConfig: (cfg) =>
+        set((s) => ({
+          audioMode: cfg.audioMode ?? s.audioMode,
+          workerUrl: cfg.workerUrl !== undefined ? cfg.workerUrl.trim() : s.workerUrl,
+        })),
+
+      /** 从分享码导入：总建新歌单，不覆盖已有数据 */
+      importShared: (name, songs) => {
+        const id = uid()
+        set((s) => ({
+          playlists: [
+            ...s.playlists,
+            {
+              id,
+              name: name.trim() || '导入的歌单',
+              songs: songs.map((song) => ({ ...song, id: uid(), addedAt: Date.now() })),
+              createdAt: Date.now(),
+            },
+          ],
+          activePlaylistId: id,
+          localUpdatedAt: Date.now(),
+        }))
+        return id
+      },
+
+      /** 凭公开 Gist ID 只读导入（无需 Token） */
+      mergeFromGist: async (id) => {
+        set({ syncStatus: 'syncing', syncMessage: '正在读取分享的歌单…' })
+        try {
+          const data = await pullGist(null, id)
+          if (!data || !data.playlists.length) {
+            set({ syncStatus: 'error', syncMessage: '这个分享链接里没有歌单' })
+            return
+          }
+          const first = data.playlists[0]
+          get().importShared(first.name, first.songs)
+          set({
+            syncStatus: 'ok',
+            syncMessage: `已导入歌单「${first.name}」（${first.songs.length} 首）`,
+            lastSyncAt: Date.now(),
+          })
+        } catch (e) {
+          set({
+            syncStatus: 'error',
+            syncMessage: e instanceof Error ? e.message : '读取分享失败',
+          })
+        }
+      },
+
       saveGithubConfig: async (cfg) => {
         set((s) => ({
           githubToken: cfg.token ?? s.githubToken,
           gistId: cfg.gistId ?? s.gistId,
           autoSync: cfg.autoSync ?? s.autoSync,
+          gistPublic: cfg.gistPublic ?? s.gistPublic,
         }))
       },
 
@@ -230,11 +296,12 @@ export const useLibrary = create<LibraryState>()(
         }
         set({ syncStatus: 'syncing', syncMessage: '正在上传…' })
         try {
-          const id = await pushGist(githubToken, gistId || null, {
-            version: 1,
-            updatedAt: Date.now(),
-            playlists,
-          })
+          const id = await pushGist(
+            githubToken,
+            gistId || null,
+            { version: 1, updatedAt: Date.now(), playlists },
+            get().gistPublic,
+          )
           set({
             gistId: id,
             syncStatus: 'ok',
@@ -355,6 +422,9 @@ export const useLibrary = create<LibraryState>()(
         currentPlaylistId: s.currentPlaylistId,
         currentSongId: s.currentSongId,
         localUpdatedAt: s.localUpdatedAt,
+        audioMode: s.audioMode,
+        workerUrl: s.workerUrl,
+        gistPublic: s.gistPublic,
         githubToken: s.githubToken,
         gistId: s.gistId,
         githubUser: s.githubUser,

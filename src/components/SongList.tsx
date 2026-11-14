@@ -216,11 +216,18 @@ export default function SongList({ playlist }: { playlist: Playlist }) {
 }
 
 function CurrentPreview({ playlistId }: { playlistId: string }) {
-  const { currentPlaylistId, currentSongId, playlists } = useLibrary()
+  const { currentPlaylistId, currentSongId, playlists, audioMode } = useLibrary()
   if (currentPlaylistId !== playlistId) return null
   const pl = playlists.find((p) => p.id === playlistId)
   const song = pl?.songs.find((s) => s.id === currentSongId)
   if (!song) return null
+  if (audioMode === 'audio') {
+    return (
+      <div className="panel px-4 py-3 text-xs text-muted">
+        纯音频播放中：<span className="text-accent">{song.title}</span>（P{song.page}）
+      </div>
+    )
+  }
   return (
     <div className="panel overflow-hidden">
       <div className="border-b border-white/5 px-4 py-2 text-xs text-muted">

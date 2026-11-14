@@ -10,13 +10,14 @@ export interface CloudPayload {
 
 const API = 'https://api.github.com'
 
-function headers(token: string): HeadersInit {
-  return {
-    Authorization: `Bearer ${token}`,
+function headers(token?: string): HeadersInit {
+  const base: Record<string, string> = {
     Accept: 'application/vnd.github+json',
     'X-GitHub-Api-Version': '2022-11-28',
     'Content-Type': 'application/json',
   }
+  if (token) base.Authorization = `Bearer ${token}`
+  return base
 }
 
 async function request<T>(url: string, init: RequestInit): Promise<T> {
@@ -29,7 +30,7 @@ async function request<T>(url: string, init: RequestInit): Promise<T> {
   if (!res.ok) {
     if (res.status === 401) throw new Error('Token 无效或已过期（401）')
     if (res.status === 403) throw new Error('Token 权限不足或触发限流（403）')
-    if (res.status === 404) throw new Error('找不到 Gist，请检查 Gist ID（404）')
+    if (res.status === 404) throw new Error('找不到 Gist，请检查分享链接是否有效（404）')
     let detail = ''
     try {
       const body = (await res.json()) as { message?: string }
@@ -45,21 +46,22 @@ async function request<T>(url: string, init: RequestInit): Promise<T> {
 interface GistResponse {
   id: string
   html_url: string
+  public: boolean
   updated_at: string
   files: Record<string, { content?: string; truncated?: boolean; raw_url?: string }>
 }
 
-/** 读取云端歌单 */
-export async function pullGist(token: string, gistId: string): Promise<CloudPayload | null> {
+/** 读取云端歌单：token 可选，公开 Gist 无需 token 即可读取 */
+export async function pullGist(token: string | null, gistId: string): Promise<CloudPayload | null> {
   const gist = await request<GistResponse>(`${API}/gists/${gistId}`, {
     method: 'GET',
-    headers: headers(token),
+    headers: headers(token || undefined),
   })
   const file = gist.files[GIST_FILE]
   if (!file) return null
   let content = file.content
   if ((!content || file.truncated) && file.raw_url) {
-    const raw = await fetch(file.raw_url, { headers: headers(token) })
+    const raw = await fetch(file.raw_url, { headers: headers(token || undefined) })
     content = await raw.text()
   }
   if (!content) return null
@@ -72,38 +74,36 @@ export async function pullGist(token: string, gistId: string): Promise<CloudPayl
   }
 }
 
-/** 写入云端歌单（gistId 为空则新建私有 Gist） */
+/** 写入云端歌单（gistId 为空则新建）；isPublic 决定是否可被他人凭 ID 只读访问 */
 export async function pushGist(
   token: string,
   gistId: string | null,
   payload: CloudPayload,
+  isPublic = false,
 ): Promise<string> {
-  const body = JSON.stringify({
-    description: 'B歌单 - 歌单备份（由 B歌单 自动同步）',
-    public: false,
-    files: { [GIST_FILE]: { content: JSON.stringify(payload, null, 2) } },
-  })
+  const fileBody = { [GIST_FILE]: { content: JSON.stringify(payload, null, 2) } }
 
   if (!gistId) {
     const created = await request<GistResponse>(`${API}/gists`, {
       method: 'POST',
       headers: headers(token),
-      body,
+      body: JSON.stringify({
+        description: 'B歌单 - 歌单备份（由 B歌单 自动同步）',
+        public: isPublic,
+        files: fileBody,
+      }),
     })
     return created.id
   }
   const updated = await request<GistResponse>(`${API}/gists/${gistId}`, {
     method: 'PATCH',
     headers: headers(token),
-    body: JSON.stringify({ files: { [GIST_FILE]: { content: JSON.stringify(payload, null, 2) } } }),
+    body: JSON.stringify({ files: fileBody }),
   })
   return updated.id
 }
 
-/**
- * 在账号下查找已有的歌单 Gist（新设备只有 Token 时用于自动发现）
- * 优先匹配包含 bili-playlist.json 的文件，其次匹配描述
- */
+/** 在账号下查找已有的歌单 Gist（新设备只有 Token 时用于自动发现） */
 export async function findGist(token: string): Promise<string | null> {
   const list = await request<Array<GistResponse>>(`${API}/gists?per_page=100`, {
     method: 'GET',

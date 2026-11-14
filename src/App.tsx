@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useLibrary } from './stores/library'
 import { playerSrc } from './utils/bili'
+import { clearUrlPayload, decodeShare, readUrlPayload } from './utils/share'
 import Sidebar from './components/Sidebar'
 import SongList from './components/SongList'
 import PlayerBar from './components/PlayerBar'
-import SyncPanel from './components/SyncPanel'
+import AudioPlayer from './components/AudioPlayer'
+import SettingsModal from './components/SettingsModal'
 
 function fmtAgo(ts: number | null): string {
   if (!ts) return ''
@@ -25,16 +27,31 @@ export default function App() {
     syncStatus,
     lastSyncAt,
     githubToken,
+    audioMode,
+    workerUrl,
   } = useLibrary()
-  const [syncOpen, setSyncOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
-  // 启动：先从云端拉取，云端也没数据时才建默认歌单
-  // （顺序很关键：先建空歌单会让本地时间戳变新，导致云端数据拉不下来）
+  // 启动：先处理链接导入，再从云端拉取，最后兜底建默认歌单
   useEffect(() => {
     let cancelled = false
     void (async () => {
+      const { share, gist } = readUrlPayload()
+      if (share) {
+        const data = await decodeShare(share)
+        if (data && !cancelled) {
+          useLibrary.getState().importShared(data.name, data.songs)
+          clearUrlPayload()
+        }
+      } else if (gist) {
+        await useLibrary.getState().mergeFromGist(gist)
+        if (!cancelled) clearUrlPayload()
+      }
+
+      if (cancelled) return
       await useLibrary.getState().autoPull()
       if (cancelled) return
+
       const state = useLibrary.getState()
       if (state.playlists.length === 0) {
         state.createPlaylist('我的歌单', { silent: true })
@@ -75,11 +92,11 @@ export default function App() {
         </span>
         <button
           className="btn-ghost ml-auto shrink-0 gap-1.5 lg:ml-3"
-          onClick={() => setSyncOpen(true)}
-          title="云端同步设置"
+          onClick={() => setSettingsOpen(true)}
+          title="设置"
         >
           <span className={`h-2 w-2 rounded-full ${syncDot}`} aria-hidden="true" />
-          <span className="text-xs">{githubToken ? '已连接' : '云同步'}</span>
+          <span className="text-xs">设置</span>
         </button>
       </header>
 
@@ -101,9 +118,17 @@ export default function App() {
         </section>
       </main>
 
-      <PlayerBar />
-      {syncOpen && <SyncPanel onClose={() => setSyncOpen(false)} />}
-      {playerVisible && currentSongId && <PlayerModal />}
+      {audioMode === 'audio' ? <AudioPlayer /> : <PlayerBar />}
+      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+      {audioMode === 'iframe' && playerVisible && currentSongId && <PlayerModal />}
+      {audioMode === 'audio' && !workerUrl && (
+        <button
+          className="fixed bottom-24 right-4 rounded-full bg-accent2 px-3 py-2 text-xs font-bold text-bg shadow-lg"
+          onClick={() => setSettingsOpen(true)}
+        >
+          配置纯音频
+        </button>
+      )}
     </div>
   )
 }
