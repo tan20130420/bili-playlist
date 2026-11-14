@@ -1,12 +1,17 @@
 import { useState } from 'react'
 import { useLibrary } from '../stores/library'
 
-interface DebugPayload {
+interface UrlPayload {
   ok?: boolean
-  cookie?: string
-  view?: { status: number; code?: number; message?: string; title?: string; raw?: string }
-  resolve?: { error?: string; step?: string; detail?: string; bandwidth?: number }
+  mp4?: string | null
+  audioKbps?: number
+  mp4Size?: number
+  cid?: number
+  part?: string
   error?: string
+  step?: string
+  detail?: string
+  host?: string
 }
 
 export default function AudioTab() {
@@ -50,7 +55,7 @@ export default function AudioTab() {
     }
   }
 
-  /** 用当前歌单里的一首歌实际走一遍 /debug */
+  /** 用当前歌单里的一首歌，实际走一遍播放所用的 /url 接口 */
   const diagnose = async () => {
     const base = baseOf()
     if (!base) {
@@ -71,40 +76,36 @@ export default function AudioTab() {
     const idq = song.bvid ? `bvid=${song.bvid}` : `aid=${song.aid ?? ''}`
     const lines: string[] = [`诊断歌曲：${song.title}（${idq} P${song.page}）`]
     try {
-      const res = await fetch(`${base}/debug?${idq}&p=${song.page}`, { cache: 'no-store' })
+      const res = await fetch(`${base}/url?${idq}&p=${song.page}`, { cache: 'no-store' })
       const ct = res.headers.get('content-type') || ''
       if (!ct.includes('json')) {
-        lines.push(`✗ 代理没有 /debug 接口（HTTP ${res.status}）`)
-        lines.push('→ 你的代理可能是旧版代码，请重新粘贴 worker/bili-audio-worker.js 最新全文')
-        setDiagLines(lines)
+        lines.push(`✗ 代理没有 /url 接口（HTTP ${res.status}）`)
+        lines.push('→ 你的代理是旧版代码，请重新粘贴 worker/bili-audio-worker.js 最新全文')
         return
       }
-      const data = (await res.json()) as DebugPayload
+      const data = (await res.json()) as UrlPayload
       if (data.error) {
-        lines.push(`✗ ${data.error}`)
-      }
-      if (data.view) {
-        lines.push(
-          data.view.code === 0
-            ? `✓ B站视频信息正常：${data.view.title ?? ''}`
-            : `✗ B站视频信息失败：code=${data.view.code} ${data.view.message ?? ''}（HTTP ${data.view.status}）`,
-        )
-        if (data.view.code !== 0 && data.view.raw) {
-          lines.push(`  原始响应：${data.view.raw.slice(0, 120)}`)
-          lines.push('  → 这是B站风控，通常因 Cloudflare 机房 IP 被拦，可稍后重试或改用 Koyeb/Render')
+        lines.push(`✗ ${data.error}（步骤 ${data.step ?? '?'}）`)
+        if (data.detail) lines.push(`  原始响应：${String(data.detail).slice(0, 120)}`)
+        if (data.step === 'view' || data.step === 'playurl') {
+          lines.push('→ B站风控了代理服务器IP（code -412/-352）')
+          lines.push('  办法1：隔几分钟再试（风控常是临时的）')
+          lines.push('  办法2：换 Koyeb / Render 部署同一份 server/ 代码，IP 更干净')
+          lines.push('  办法3：手机开着 VPN 时诊断，让代理走不同线路')
         }
-      }
-      if (data.resolve) {
-        if (data.resolve.error) {
-          lines.push(`✗ 取音频流失败（步骤 ${data.resolve.step ?? '?'}）：${data.resolve.error}`)
-          if (data.resolve.detail) lines.push(`  原始响应：${String(data.resolve.detail).slice(0, 120)}`)
-        } else {
-          lines.push(`✓ 已取到音频流，码率约 ${Math.round((data.resolve.bandwidth ?? 0) / 1000)} kbps`)
-          lines.push('→ 代理链路完全正常，回到播放器重试即可')
+        if (data.step === 'cdn') {
+          lines.push('→ B站CDN拒绝了代理，换 Koyeb/Render 或稍后重试')
         }
+        return
       }
+      lines.push(`✓ 已取到音频地址（cid=${data.cid ?? '?'}${data.part ? ` 分P：${data.part}` : ''}）`)
+      if (data.mp4) {
+        lines.push(`✓ 可直连播放，文件约 ${Math.round((data.mp4Size ?? 0) / 1048576)} MB`)
+      }
+      if (data.audioKbps) lines.push(`  纯音频码率约 ${data.audioKbps} kbps`)
+      lines.push('→ 代理链路完全正常，回到播放器即可播放')
     } catch {
-      lines.push('✗ 无法连接代理的 /debug 接口')
+      lines.push('✗ 无法连接代理的 /url 接口')
       lines.push('→ 确认地址正确、当前网络能访问该域名')
     } finally {
       setDiagging(false)

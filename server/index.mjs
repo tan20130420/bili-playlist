@@ -18,9 +18,14 @@ import http from 'node:http'
 
 const PORT = Number(process.env.PORT) || 8080
 
-const UA =
-  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+const UAS = [
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+]
+const UA = UAS[0]
 const REFERER = 'https://www.bilibili.com/'
+const API_HOSTS = ['https://api.bilibili.com', 'https://api.biliapi.net']
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -30,72 +35,142 @@ const CORS = {
 }
 
 let cachedBuvid = ''
+let buvidAt = 0
 
 async function getBuvid() {
-  if (cachedBuvid) return cachedBuvid
-  try {
-    const res = await fetch('https://api.bilibili.com/x/frontend/finger/spi', {
-      headers: { 'User-Agent': UA, Referer: REFERER },
-    })
-    const json = await res.json()
-    cachedBuvid = json?.data?.b_3 || ''
-  } catch {
-    cachedBuvid = ''
+  if (cachedBuvid && Date.now() - buvidAt < 1800_000) return cachedBuvid
+  for (const host of API_HOSTS) {
+    try {
+      const res = await fetch(`${host}/x/frontend/finger/spi`, {
+        headers: { 'User-Agent': UA, Referer: REFERER },
+      })
+      const json = await res.json()
+      const b3 = json?.data?.b_3 || ''
+      const b4 = json?.data?.b_4 || ''
+      if (!b3) continue
+      const now = Math.floor(Date.now() / 1000)
+      cachedBuvid = [
+        `buvid3=${b3}`,
+        b4 ? `buvid4=${encodeURIComponent(b4)}` : '',
+        `b_nut=${now}`,
+        `b_lsid=${now.toString(16).toUpperCase()}`,
+      ]
+        .filter(Boolean)
+        .join('; ')
+      buvidAt = Date.now()
+      return cachedBuvid
+    } catch {
+      /* 下一个域名 */
+    }
   }
-  return cachedBuvid
+  return ''
 }
 
-/** 请求B站 API；遇到风控页（返回 HTML）时带 buvid 重试 */
+function browserHeaders(uaIndex) {
+  return {
+    'User-Agent': UAS[uaIndex % UAS.length],
+    Referer: REFERER,
+    Origin: 'https://www.bilibili.com',
+    Accept: 'application/json, text/plain, */*',
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'Sec-Fetch-Dest': 'empty',
+    'Sec-Fetch-Mode': 'cors',
+    'Sec-Fetch-Site': 'same-site',
+  }
+}
+
+/** 请求B站 API：多域名 × 多指纹 × 两轮重试，应对 -412 风控 */
 async function biliApi(path) {
-  const url = `https://api.bilibili.com${path}`
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const headers = { 'User-Agent': UA, Referer: REFERER }
-    if (attempt === 1) {
-      const b3 = await getBuvid()
-      if (b3) headers.Cookie = `buvid3=${b3}`
-    }
-    let text = ''
-    try {
-      const res = await fetch(url, { headers })
-      text = await res.text()
-    } catch {
-      return null
-    }
-    if (text.trim().startsWith('<')) continue
-    try {
-      return JSON.parse(text)
-    } catch {
-      return null
+  let attempt = 0
+  for (let round = 0; round < 2; round += 1) {
+    for (const host of API_HOSTS) {
+      attempt += 1
+      const headers = await (async () => {
+        const h = browserHeaders(attempt)
+        const c = await getBuvid()
+        if (c) h.Cookie = c
+        return h
+      })()
+      try {
+        const res = await fetch(`${host}${path}`, { headers })
+        const text = await res.text()
+        const trimmed = text.trim()
+        if (trimmed.startsWith('<')) continue
+        let json
+        try {
+          json = JSON.parse(trimmed)
+        } catch {
+          continue
+        }
+        if (json.code === 0) return json
+        if (json.code !== -412 && json.code !== -352) return json
+        cachedBuvid = ''
+      } catch {
+        /* 下一个 */
+      }
     }
   }
   return null
 }
 
 async function resolveAudio({ bvid, aid, p }) {
-  // 注意：view 接口用 aid，playurl 接口必须用 avid，写错会返回 -400 请求错误
+  // view 接口用 aid，playurl 接口必须用 avid，写错会返回 -400 请求错误
   const viewId = bvid ? `bvid=${encodeURIComponent(bvid)}` : `aid=${encodeURIComponent(aid)}`
   const playId = bvid ? `bvid=${encodeURIComponent(bvid)}` : `avid=${encodeURIComponent(aid)}`
-  const view = await biliApi(`/x/web-interface/view?${viewId}`)
-  if (!view || view.code !== 0 || !view.data) {
-    return { error: view?.message || '获取视频信息失败' }
+
+  // 优先用更轻量的 pagelist 取 cid，被风控时再用 view
+  let cid = null
+  let part = ''
+  let failInfo = null
+  if (bvid) {
+    const list = await biliApi(`/x/player/pagelist?bvid=${encodeURIComponent(bvid)}&jsonp=jsonp`)
+    if (list && list.code === 0 && Array.isArray(list.data) && list.data.length) {
+      const num = Math.max(1, Number(p) || 1)
+      if (num > list.data.length) return { error: `该视频只有 ${list.data.length} 个分P` }
+      cid = list.data[num - 1].cid
+      part = list.data[num - 1].part || ''
+    } else {
+      failInfo = list
+    }
   }
-  const pages = view.data.pages || []
-  const pageNum = Math.max(1, Number(p) || 1)
-  if (pages.length && pageNum > pages.length) {
-    return { error: `该视频只有 ${pages.length} 个分P` }
+  if (!cid) {
+    const view = await biliApi(`/x/web-interface/view?${viewId}`)
+    if (!view || view.code !== 0 || !view.data) {
+      return { error: view?.message || failInfo?.message || '获取视频信息失败' }
+    }
+    const pages = view.data.pages || []
+    const pageNum = Math.max(1, Number(p) || 1)
+    if (pages.length && pageNum > pages.length) {
+      return { error: `该视频只有 ${pages.length} 个分P` }
+    }
+    cid = pages[pageNum - 1]?.cid || view.data.cid
+    part = pages[pageNum - 1]?.part || ''
   }
-  const target = pages[pageNum - 1]
-  const cid = target?.cid || view.data.cid
   if (!cid) return { error: '找不到该分P' }
 
-  const play = await biliApi(`/x/player/playurl?${playId}&cid=${cid}&fnval=16&fnver=0&fourk=1`)
-  if (!play || play.code !== 0 || !play.data) {
-    return { error: play?.message || '获取播放地址失败' }
+  // DASH 纯音频（需 Referer，只能走 /audio 代理）
+  const play = await biliApi(`/x/player/playurl?${playId}&cid=${cid}&fnval=16&fnver=0&fourk=1&platform=pc&high_quality=1`)
+  let audio = null
+  if (play && play.code === 0 && play.data) {
+    const audios = play.data.dash?.audio || []
+    if (audios.length) {
+      audios.sort((a, b) => (b.bandwidth || 0) - (a.bandwidth || 0))
+      audio = { url: audios[0].baseUrl, backups: audios[0].backupUrl || [], bandwidth: audios[0].bandwidth || 0 }
+    }
   }
-  const audios = play.data.dash?.audio || []
-  if (!audios.length) return { error: '该视频没有可用的音频流' }
-  audios.sort((a, b) => (b.bandwidth || 0) - (a.bandwidth || 0))
-  return { url: audios[0].baseUrl, backups: audios[0].backupUrl || [] }
+
+  // MP4 直链（不需 Referer，浏览器可直连）
+  const play2 = await biliApi(`/x/player/playurl?${playId}&cid=${cid}&fnval=1&fnver=0&platform=html5&high_quality=1`)
+  let mp4 = null
+  if (play2 && play2.code === 0 && play2.data?.durl?.length) {
+    const d = play2.data.durl[0]
+    mp4 = { url: d.url, backups: d.backup_url || [], size: d.size || 0 }
+  }
+
+  if (!audio && !mp4) {
+    return { error: play?.message || '该视频没有可用的音频流' }
+  }
+  return { audio, mp4, cid, part }
 }
 
 function sendJson(res, body, status = 200) {
@@ -122,15 +197,40 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
-  if (url.pathname !== '/audio') {
-    res.writeHead(404, { ...CORS, 'Content-Type': 'text/plain; charset=utf-8' })
-    res.end('Not Found. 可用路由：/health、/audio?bvid=BVxxx&p=1')
-    return
-  }
-
   const bvid = url.searchParams.get('bvid') || ''
   const aid = url.searchParams.get('aid') || ''
   const p = url.searchParams.get('p') || '1'
+
+  // 直链模式：只换地址，音频由客户端直连B站 CDN
+  if (url.pathname === '/url') {
+    if (!bvid && !aid) {
+      sendJson(res, { error: '缺少 bvid 或 aid 参数' }, 400)
+      return
+    }
+    const info = await resolveAudio({ bvid, aid, p })
+    if (info.error) {
+      sendJson(res, info, 502)
+      return
+    }
+    sendJson(res, {
+      ok: true,
+      cid: info.cid,
+      part: info.part,
+      mp4: info.mp4?.url ?? null,
+      mp4Backups: info.mp4?.backups ?? [],
+      mp4Size: info.mp4?.size ?? 0,
+      audio: info.audio?.url ?? null,
+      audioKbps: Math.round((info.audio?.bandwidth || 0) / 1000),
+    })
+    return
+  }
+
+  if (url.pathname !== '/audio') {
+    res.writeHead(404, { ...CORS, 'Content-Type': 'text/plain; charset=utf-8' })
+    res.end('Not Found. 可用路由：/health、/url、/audio')
+    return
+  }
+
   if (!bvid && !aid) {
     sendJson(res, { error: '缺少 bvid 或 aid 参数' }, 400)
     return
@@ -142,8 +242,12 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, info, 502)
       return
     }
+    if (!info.audio) {
+      sendJson(res, { error: '该视频没有独立音频流，请改用直链模式', step: 'dash' }, 502)
+      return
+    }
 
-    const candidates = [info.url, ...(info.backups || [])]
+    const candidates = [info.audio.url, ...(info.audio.backups || [])]
     const range = req.headers.range
     let upstream = null
     let lastStatus = 0
