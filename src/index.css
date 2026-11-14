@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-bg text-text font-sans antialiased;
+  background-image:
+    radial-gradient(ellipse 80% 50% at 20% -10%, rgba(61, 220, 151, 0.08), transparent),
+    radial-gradient(ellipse 60% 40% at 90% 110%, rgba(244, 185, 66, 0.06), transparent);
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-1 rounded-lg px-3 py-1.5 text-sm
+      transition-all duration-150 focus:outline-none focus-visible:ring-2
+      focus-visible:ring-accent/70 active:scale-95 disabled:opacity-40
+      disabled:pointer-events-none min-h-[36px];
+  }
+  .btn-primary {
+    @apply btn bg-accent text-bg font-bold hover:bg-accent/85;
+  }
+  .btn-ghost {
+    @apply btn text-muted hover:text-text hover:bg-panel2;
+  }
+  .btn-danger {
+    @apply btn text-red-400 hover:text-red-300 hover:bg-red-500/10;
+  }
+  .input {
+    @apply w-full rounded-lg border border-white/10 bg-panel2 px-3 py-2 text-sm text-text
+      placeholder:text-muted/60 focus:outline-none focus:border-accent/60
+      focus:ring-1 focus:ring-accent/40 transition-colors;
+  }
+  .panel {
+    @apply rounded-2xl border border-white/5 bg-panel/80 backdrop-blur;
+  }
+}
+
+/* 细滚动条 */
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(122, 138, 130, 0.35);
+  border-radius: 3px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.rise-in {
+  animation: rise-in 0.35s ease both;
+}
+.rise-in-1 { animation-delay: 0.05s; }
+.rise-in-2 { animation-delay: 0.12s; }
+.rise-in-3 { animation-delay: 0.2s; }
