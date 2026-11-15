@@ -1,0 +1,14 @@
+{
+  "name": "bili-playlist-audio-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "B歌单音频代理：把B站 DASH 音频流代理出来，支持纯音频与锁屏后台播放",
+  "main": "index.mjs",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
