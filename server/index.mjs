@@ -15,6 +15,7 @@
  */
 
 import http from 'node:http'
+import { wbiKeys, wbiSign } from './wbi.mjs'
 
 const PORT = Number(process.env.PORT) || 8080
 
@@ -79,8 +80,11 @@ function browserHeaders(uaIndex) {
   }
 }
 
-/** 请求B站 API：多域名 × 多指纹 × 两轮重试，应对 -412 风控 */
-async function biliApi(path) {
+/**
+ * 请求B站 API：多域名 × 多指纹 × 两轮重试，应对 -412 风控
+ * opt.wbi 为 true 时对参数做 WBI 签名（被风控 IP 未签名必返回 -412）
+ */
+async function biliApi(path, opt = {}) {
   let attempt = 0
   for (let round = 0; round < 2; round += 1) {
     for (const host of API_HOSTS) {
@@ -91,8 +95,17 @@ async function biliApi(path) {
         if (c) h.Cookie = c
         return h
       })()
+      // WBI 签名
+      let reqPath = path
+      if (opt.wbi && path.includes('?')) {
+        const [basePath, query] = path.split('?')
+        const params = Object.fromEntries(new URLSearchParams(query))
+        const key = await wbiKeys(fetch, API_HOSTS, (i) => browserHeaders(i))
+        const signed = wbiSign(params, key)
+        if (signed) reqPath = `${basePath}?${signed}`
+      }
       try {
-        const res = await fetch(`${host}${path}`, { headers })
+        const res = await fetch(`${host}${reqPath}`, { headers })
         const text = await res.text()
         const trimmed = text.trim()
         if (trimmed.startsWith('<')) continue
@@ -123,7 +136,7 @@ async function resolveAudio({ bvid, aid, p }) {
   let part = ''
   let failInfo = null
   if (bvid) {
-    const list = await biliApi(`/x/player/pagelist?bvid=${encodeURIComponent(bvid)}&jsonp=jsonp`)
+    const list = await biliApi(`/x/player/pagelist?bvid=${encodeURIComponent(bvid)}&jsonp=jsonp`, { wbi: true })
     if (list && list.code === 0 && Array.isArray(list.data) && list.data.length) {
       const num = Math.max(1, Number(p) || 1)
       if (num > list.data.length) return { error: `该视频只有 ${list.data.length} 个分P` }
@@ -134,7 +147,7 @@ async function resolveAudio({ bvid, aid, p }) {
     }
   }
   if (!cid) {
-    const view = await biliApi(`/x/web-interface/view?${viewId}`)
+    const view = await biliApi(`/x/web-interface/view?${viewId}`, { wbi: true })
     if (!view || view.code !== 0 || !view.data) {
       return { error: view?.message || failInfo?.message || '获取视频信息失败' }
     }
@@ -149,7 +162,10 @@ async function resolveAudio({ bvid, aid, p }) {
   if (!cid) return { error: '找不到该分P' }
 
   // DASH 纯音频（需 Referer，只能走 /audio 代理）
-  const play = await biliApi(`/x/player/playurl?${playId}&cid=${cid}&fnval=16&fnver=0&fourk=1&platform=pc&high_quality=1`)
+  const play = await biliApi(
+    `/x/player/playurl?${playId}&cid=${cid}&fnval=16&fnver=0&fourk=1&platform=pc&high_quality=1`,
+    { wbi: true },
+  )
   let audio = null
   if (play && play.code === 0 && play.data) {
     const audios = play.data.dash?.audio || []
@@ -160,7 +176,10 @@ async function resolveAudio({ bvid, aid, p }) {
   }
 
   // MP4 直链（不需 Referer，浏览器可直连）
-  const play2 = await biliApi(`/x/player/playurl?${playId}&cid=${cid}&fnval=1&fnver=0&platform=html5&high_quality=1`)
+  const play2 = await biliApi(
+    `/x/player/playurl?${playId}&cid=${cid}&fnval=1&fnver=0&platform=html5&high_quality=1`,
+    { wbi: true },
+  )
   let mp4 = null
   if (play2 && play2.code === 0 && play2.data?.durl?.length) {
     const d = play2.data.durl[0]
