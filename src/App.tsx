@@ -28,7 +28,6 @@ export default function App() {
     lastSyncAt,
     githubToken,
     audioMode,
-    workerUrl,
   } = useLibrary()
   const [settingsOpen, setSettingsOpen] = useState(false)
 
@@ -121,14 +120,6 @@ export default function App() {
       {audioMode === 'audio' ? <AudioPlayer /> : <PlayerBar />}
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       {audioMode === 'iframe' && playerVisible && currentSongId && <PlayerModal />}
-      {audioMode === 'audio' && !workerUrl && (
-        <button
-          className="fixed bottom-24 right-4 rounded-full bg-accent2 px-3 py-2 text-xs font-bold text-bg shadow-lg"
-          onClick={() => setSettingsOpen(true)}
-        >
-          配置纯音频
-        </button>
-      )}
     </div>
   )
 }

@@ -6,6 +6,10 @@ import { findGist, pullGist, pushGist, verifyToken } from '../services/gist'
 
 export type SyncStatus = 'idle' | 'syncing' | 'ok' | 'error'
 
+/** 内置默认音频代理（腾讯云函数 SCF·广州），新设备无需手动填写 */
+export const DEFAULT_PROXY_URL =
+  'https://1532867046-cnbztko5wx.ap-guangzhou.tencentscf.com'
+
 interface LibraryState {
   playlists: Playlist[]
   activePlaylistId: string | null
@@ -58,6 +62,11 @@ interface LibraryState {
   mergeFromGist: (gistId: string) => Promise<void>
 }
 
+/** 生效的代理地址：用户未填时用内置默认 */
+export function effectiveWorkerUrl(workerUrl: string): string {
+  return workerUrl.trim() || DEFAULT_PROXY_URL
+}
+
 /** 云端拉取时抑制自动推送，避免回环 */
 let suppressPush = false
 
@@ -72,6 +81,7 @@ export const useLibrary = create<LibraryState>()(
       localUpdatedAt: 0,
       audioMode: 'iframe',
       workerUrl: '',
+      // 注意：读取时用 helper effectiveWorkerUrl()，空值回退到内置默认地址
       gistPublic: false,
 
       githubToken: '',

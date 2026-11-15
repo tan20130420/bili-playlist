@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useLibrary } from '../stores/library'
+import { useLibrary, effectiveWorkerUrl } from '../stores/library'
 
 /**
  * 纯音频播放器。
@@ -24,9 +24,10 @@ export default function AudioPlayer() {
 
   const pl = playlists.find((p) => p.id === currentPlaylistId)
   const song = pl?.songs.find((s) => s.id === currentSongId)
-  const enabled = audioMode === 'audio' && Boolean(workerUrl) && Boolean(song)
+  const effUrl = effectiveWorkerUrl(workerUrl)
+  const enabled = audioMode === 'audio' && Boolean(effUrl) && Boolean(song)
 
-  const base = workerUrl.trim().replace(/\/+$/, '')
+  const base = effUrl.replace(/\/+$/, '')
   const idQuery = song ? (song.bvid ? `bvid=${song.bvid}` : `aid=${song.aid ?? ''}`) : ''
   const streamSrc = enabled && idQuery ? `${base}/audio?${idQuery}&p=${song?.page ?? 1}` : ''
 
@@ -138,7 +139,7 @@ export default function AudioPlayer() {
 
   if (audioMode !== 'audio') return null
 
-  if (!workerUrl) {
+  if (!effUrl) {
     return (
       <div className="border-t border-white/5 bg-panel/90 px-4 py-2 text-center text-xs text-accent2">
         纯音频模式需要先填写音频代理地址：点右上角「设置」→ 音频
@@ -158,6 +159,7 @@ export default function AudioPlayer() {
             <span className="shrink-0 text-[11px] text-muted">
               P{song.page}
               {direct && src && !resolving ? ' · 直连' : ''}
+              {!workerUrl.trim() && ' · 默认线路'}
             </span>
           )}
         </div>

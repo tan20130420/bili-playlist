@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useLibrary } from '../stores/library'
+import { useLibrary, DEFAULT_PROXY_URL } from '../stores/library'
 
 interface UrlPayload {
   ok?: boolean
@@ -29,7 +29,7 @@ export default function AudioTab() {
     setTestState('idle')
   }
 
-  const baseOf = () => url.trim().replace(/\/+$/, '')
+  const baseOf = () => (url.trim() || DEFAULT_PROXY_URL).replace(/\/+$/, '')
 
   const test = async () => {
     const base = baseOf()
@@ -150,11 +150,27 @@ export default function AudioTab() {
         <input
           id="worker-url"
           className="input font-mono text-xs"
-          placeholder="https://xxx.koyeb.app 或 https://xxx.workers.dev"
+          placeholder={`默认：${DEFAULT_PROXY_URL.slice(8, 40)}…（留空即用默认）`}
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && save()}
         />
+        <p className="text-[11px] text-muted">
+          当前使用：{url.trim() ? <span className="text-accent">自定义</span> : <span className="text-accent">内置默认线路</span>}
+          {url.trim() && (
+            <button
+              className="ml-2 text-accent2 underline"
+              onClick={() => {
+                setUrl('')
+                saveAudioConfig({ workerUrl: '' })
+                setMsg('已恢复默认线路')
+                setTestState('idle')
+              }}
+            >
+              恢复默认
+            </button>
+          )}
+        </p>
         <div className="grid grid-cols-3 gap-2">
           <button className="btn-primary" onClick={save}>
             保存
